@@ -615,7 +615,7 @@ void main () {
       if (this.level) {
         const [bw, bh] = this.level.size;
         // По ширине, но не крупнее, чем нужно, чтобы видеть 75% высоты уровня (планшеты); края — размытый фон.
-        this.s = this.level.fit ? Math.min(W / bw, H / bh) : Math.min(W / bw, H / (bh * 0.75));
+        this.s = this.level.fit ? Math.min(W / bw, H / (bh * 0.9)) : Math.min(W / bw, H / (bh * 0.75));
         this.ox = (W - bw * this.s) / 2;
         document.getElementById('world').style.width = bw * this.s + 'px';
       }
