@@ -141,7 +141,7 @@ void main () {
       const url = HW.Mraid.storeUrl(typeof navigator !== 'undefined' ? navigator.userAgent : '');
       if (!url) return; // превью-билд без ссылок
       if (has() && mraid.open) mraid.open(url);
-      else { const w = window.open(url, '_blank'); if (!w) window.location.href = url; }
+      else { const w = window.open(url, '_blank'); if (!w) window.location.href = url; } // попап заблокирован — открываем в этой же вкладке
     },
   };
 })(typeof window !== 'undefined' ? (window.HW = window.HW || {}) : (globalThis.HW = globalThis.HW || {}));
@@ -203,9 +203,9 @@ void main () {
     },
     // iOS разблокирует Web Audio на touchend/click, а не на touchstart: дожимаем resume на каждом жесте.
     resume() { if (this.ctx && this.ctx.state !== 'running' && this.ctx.resume) this.ctx.resume(); },
-    play(name, { vol } = {}) {
+    play(name, { vol, pitch } = {}) {
       if (!this.ctx || !this.buf[name]) return;
-      const s = this.ctx.createBufferSource(); s.buffer = this.buf[name];
+      const s = this.ctx.createBufferSource(); s.buffer = this.buf[name]; if (pitch) s.playbackRate.value = pitch;
       const g = this.ctx.createGain(); g.gain.value = vol ?? VOL[name] ?? 0.8;
       s.connect(g); g.connect(this.master); s.start();
       return s;
@@ -544,6 +544,11 @@ void main () {
     + '#giant{transform-origin:50% 73%}#giant.roar{animation:hwroar .9s ease-in-out 2}';
 
   const ease = (t) => (t < 0.5 ? 2 * t * t : 1 - Math.pow(-2 * t + 2, 2) / 2);
+  const tweenLinear = (ms, fn) => new Promise((res) => {
+    const t0 = performance.now();
+    const step = (now) => { const t = Math.min(1, (now - t0) / ms); fn(t); if (t < 1) requestAnimationFrame(step); else res(); };
+    requestAnimationFrame(step);
+  });
   const tween = (ms, fn) => new Promise((res) => {
     const t0 = performance.now();
     const step = (now) => { const t = Math.min(1, (now - t0) / ms); fn(ease(t)); if (t < 1) requestAnimationFrame(step); else res(); };
@@ -727,14 +732,21 @@ void main () {
         if (loop) return res();
         e.listener = { complete: () => { e.listener = null; res(); } };
       });
+      // Движение по маршруту одним ходом: постоянная скорость по всей ломаной, разгон и торможение только в начале и в конце
+      // (раньше каждый отрезок шёл своим ease-in-out — персонаж замирал на каждом узле, а спутница с шагом 50 px дёргалась).
       actor.moveAlong = (points, speed = 520) => {
-        let p = Promise.resolve();
-        for (const [tx, ty] of points) p = p.then(() => {
-          const fx = actor.x, fy = actor.y, d = Math.hypot(tx - fx, ty - fy);
-          if (Math.abs(tx - fx) > 4) actor.flip = tx < fx;
-          return tween(Math.max(60, (d / speed) * 1000), (t) => { actor.x = fx + (tx - fx) * t; actor.y = fy + (ty - fy) * t; });
-        });
-        return p;
+        const P = [[actor.x, actor.y], ...points], L = [0];
+        for (let i = 1; i < P.length; i++) L.push(L[i - 1] + Math.hypot(P[i][0] - P[i - 1][0], P[i][1] - P[i - 1][1]));
+        const total = L[L.length - 1]; if (total < 1) return Promise.resolve();
+        const ms = Math.max(120, (total / speed) * 1000), r = Math.min(0.3, 140 / ms); // доля времени на разгон/торможение
+        const v = 1 / (1 - r); // скорость на ровном участке так, чтобы весь путь прошёлся за ms
+        const dist = (t) => t < r ? v * t * t / (2 * r) : t > 1 - r ? 1 - v * (1 - t) * (1 - t) / (2 * r) : v * (t - r / 2);
+        let seg = 1;
+        return tweenLinear(ms, (t) => { const d = dist(t) * total;
+          while (seg < P.length - 1 && L[seg] < d) seg++;
+          const a = P[seg - 1], b = P[seg], k = (d - L[seg - 1]) / ((L[seg] - L[seg - 1]) || 1);
+          if (Math.abs(b[0] - a[0]) > 4) actor.flip = b[0] < a[0];
+          actor.x = a[0] + (b[0] - a[0]) * k; actor.y = a[1] + (b[1] - a[1]) * k; });
       };
       // Белая вспышка при ударе (двухцветный тинт: тёмный цвет белый — силуэт заливается белым).
       actor.flash = (ms = 90) => { for (const sl of sk.slots) sl.darkColor && sl.darkColor.set(1, 1, 1, 1);
@@ -974,7 +986,7 @@ void main () {
       const logo = LOGO_SRC ? `<img src="${LOGO_SRC}" alt="Hero Wars">` : 'HERO WARS';
       this.top = this.add(`<div class="top"><div class="btn inst">INSTALL</div><div class="btn mute">${SPEAKER(true)}</div></div>`);
       this.logoEl = this.add(`<div class="logo">${logo}</div>`); // лого в правом нижнем углу, чтобы не мешать числам вверху
-      const inst = this.top.querySelector('.inst');
+      const inst = this.top.querySelector('.inst'); // переход в стор — на click: мобильные браузеры блокируют window.open на pointerdown
       inst.addEventListener('pointerdown', (e) => e.stopPropagation()); inst.addEventListener('click', (e) => { e.stopPropagation(); onInstall(); });
       const m = this.top.querySelector('.mute'); let on = true;
       m.addEventListener('pointerdown', (e) => { e.stopPropagation(); on = !on; m.innerHTML = SPEAKER(on); onMute(!on); });
@@ -1034,6 +1046,22 @@ void main () {
   const SWING = 1.5; // ускорение замаха героя перед ударом и пинком сундука (меньше ожидания)
   const wait = (ms) => new Promise((r) => setTimeout(r, ms));
   const sfx = (n, o) => HW.Audio && HW.Audio.play(n, o);
+  const pitch = () => 0.94 + Math.random() * 0.12;
+  // Слои импакта (по разбору «почему удар не чувствуется»): вспышка → стоп-кадр → тряска → отброс + искры → звук.
+  // light — для пинка по сундуку: те же слои, но мягче.
+  const impact = async (hero, foe, away, at, { light = false } = {}) => {
+    const S = HW.Stage, UI = HW.UI, k = light ? 0.55 : 1;
+    const hit = [at[0] - away * 18, at[1]]; // точка контакта — край цели со стороны героя, а не её центр
+    sfx('hit', { pitch: pitch() });
+    foe.flash(light ? 70 : 110);
+    S.flashGlow(hit, 'white', 200, light ? 200 : 300);
+    S.hitStop(light ? 60 : 95);
+    await wait(light ? 60 : 95); // кадр стоит: тряска и отброс начинаются после стопа — так удар «втыкается»
+    S.shake(light ? 180 : 300, 16 * k);
+    UI.sparks(hit, { n: light ? 8 : 16, size: 58, speed: 380, dir: away > 0 ? -0.2 : Math.PI + 0.2, spread: 0.9 });
+    if (!light) { foe.play('damage'); foe.knock(away * 80, 300); }
+    hero.knock(-away * 14 * k, 160, true);
+  };
 
   function stopShort(from, to, off) {
     const dx = to[0] - from[0], dy = to[1] - from[1], d = Math.hypot(dx, dy) || 1;
@@ -1201,11 +1229,10 @@ void main () {
             const shoot = !!(mate && mate.gun);
             if (shoot) { mate.flip = tgt.xy[0] < mate.x; mate.firing = true; setTimeout(() => UI.coins([mate.x + (mate.flip ? -1 : 1) * look.princess * 0.3, mate.y - mate.h * 0.45], center(r.target), 5, 'fire'), Math.round(330 / SWING)); mate.play('attack', false, SWING).then(() => { mate.firing = false; mate.play('idle_gun', true); }); }
             hero.play('melee_attack/side/attack_1', false, SWING); await wait(Math.round(367 / SWING)); // момент удара — событие hit героя (0,367 с), анимация ускорена
-            // Удар «с мясом»: вспышка, заморозка кадра, искры, тряска, отбрасывание врага и отдача героя.
+            // Удар в пять слоёв: 1) враг вспыхивает белым, 2) стоп-кадр — всё замирает, 3) тряска экрана,
+            // 4) отброс врага и искры из точки контакта, 5) звук удара с плавающей высотой (не одинаковый каждый раз).
             const away = foe.x >= hero.x ? 1 : -1;
-            sfx('hit'); foe.flash(100); Stage.hitStop(70); Stage.shake(220, 9);
-            UI.sparks(center(r.target), { n: 12, size: 54, speed: 300, dir: away > 0 ? -0.25 : Math.PI + 0.25, spread: 0.85 }); // из середины врага, в сторону от удара
-            foe.play('damage'); foe.knock(away * 55, 280); hero.knock(-away * 16, 180, true);
+            await impact(hero, foe, away, center(r.target));
             await wait(200);
             // Враг падает, а его сила тает до нуля; затем она «перекачивается» в героя.
             sfx('death_enemy'); foe.play('death'); setTimeout(() => foe.remove(500), 350);
@@ -1268,7 +1295,7 @@ void main () {
             if (tgt.type === 'chest') {
               // Герой открывает сундук пинком: крышка слетает в момент удара (событие hit на 0,37 с).
               hero.flip = tgt.xy[0] < hero.x; kick = hero.play('melee_attack/misc/kick', false, SWING); await wait(Math.round(370 / SWING));
-              sfx('hit'); Stage.shake(150, 5);
+              await impact(hero, foe, foe.x >= hero.x ? 1 : -1, center(r.target), { light: true });
               chestFx[tgt.id] && chestFx[tgt.id](); sfx('chest_open'); foe.play('open'); sfx('coins');
               UI.coins([tgt.xy[0], tgt.xy[1] - 40], [hero.x, hero.y - hero.h * 0.5], 14, 'gold', () => hero.bounce()); }
             else {
