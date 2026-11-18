@@ -140,7 +140,8 @@ void main () {
     openStore() {
       const url = HW.Mraid.storeUrl(typeof navigator !== 'undefined' ? navigator.userAgent : '');
       if (!url) return; // превью-билд без ссылок
-      if (has() && mraid.open) mraid.open(url); else window.open(url, '_blank');
+      if (has() && mraid.open) mraid.open(url);
+      else { const w = window.open(url, '_blank'); if (!w) window.location.href = url; }
     },
   };
 })(typeof window !== 'undefined' ? (window.HW = window.HW || {}) : (globalThis.HW = globalThis.HW || {}));
@@ -973,7 +974,8 @@ void main () {
       const logo = LOGO_SRC ? `<img src="${LOGO_SRC}" alt="Hero Wars">` : 'HERO WARS';
       this.top = this.add(`<div class="top"><div class="btn inst">INSTALL</div><div class="btn mute">${SPEAKER(true)}</div></div>`);
       this.logoEl = this.add(`<div class="logo">${logo}</div>`); // лого в правом нижнем углу, чтобы не мешать числам вверху
-      this.top.querySelector('.inst').addEventListener('pointerdown', (e) => { e.stopPropagation(); onInstall(); });
+      const inst = this.top.querySelector('.inst');
+      inst.addEventListener('pointerdown', (e) => e.stopPropagation()); inst.addEventListener('click', (e) => { e.stopPropagation(); onInstall(); });
       const m = this.top.querySelector('.mute'); let on = true;
       m.addEventListener('pointerdown', (e) => { e.stopPropagation(); on = !on; m.innerHTML = SPEAKER(on); onMute(!on); });
     },
@@ -981,7 +983,7 @@ void main () {
       const el = this.add(fail
         ? `<div class="end fail"><div class="fplate"><img src="${FAIL_SRC}" alt=""><span>DEFEAT!</span></div><div class="sub">THE BATTLE ISN\'T OVER<br>CONTINUE IN THE GAME</div><div class="pbtn"><img class="pcont" src="${CONT_SRC}" alt=""><img class="phand" src="${HAND_SRC}" alt=""></div></div>`
         : `<div class="end pack">${LOGO_SRC ? `<img class="plogo" src="${LOGO_SRC}" alt="">` : '<div class="plogo wm">Hero Wars</div>'}<div class="pbtn"><img class="pcont" src="${CONT_SRC}" alt=""><img class="phand" src="${HAND_SRC}" alt=""></div></div>`);
-      el.addEventListener('pointerdown', (e) => { e.stopPropagation(); onPlay(); });
+      el.addEventListener('pointerdown', (e) => e.stopPropagation()); el.addEventListener('click', (e) => { e.stopPropagation(); onPlay(); });
       document.getElementById('world').classList.add('dim');
       if (!fail && LOGO_SRC && this.logoEl) this.logoEl.style.visibility = 'hidden'; // лого переехало на пэкшот, в углу не дублируем
       requestAnimationFrame(() => { el.style.opacity = 1; });
