@@ -1,6 +1,6 @@
 <!doctype html>
 <html lang="en"><head>
-<meta charset="utf-8"><meta name="robots" content="noindex,nofollow">
+<meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no,viewport-fit=cover">
 <meta name="ad.orientation" content="portrait">
 <title>Hero Wars</title>
@@ -809,7 +809,7 @@ void main () {
 #ui .top{position:absolute;left:10px;right:10px;top:10px;display:flex;align-items:center;gap:8px;pointer-events:auto}
 #ui .btn{background:linear-gradient(#5fd13a,#2f9a1e);color:#fff;font:900 15px 'Arial Black',Arial;padding:7px 16px;border-radius:9px;border:2px solid #fff;box-shadow:0 3px 0 #1d6a12;cursor:pointer}
 #ui .mute{width:38px;height:34px;padding:5px}
-#ui .logo{margin-left:auto;font:900 19px 'Arial Black',Arial;color:#ffb300;-webkit-text-stroke:1.3px #7a3a00;letter-spacing:.5px}
+#ui .logo{position:absolute;right:10px;bottom:10px;pointer-events:none;font:900 19px 'Arial Black',Arial;color:#ffb300;-webkit-text-stroke:1.3px #7a3a00;letter-spacing:.5px}
 #ui .logo img{height:34px;display:block}
 #world.dim{filter:blur(6px) brightness(.6);transition:filter .5s}
 #ui .end{position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:space-between;padding:16% 6% 12%;pointer-events:auto;opacity:0;transition:opacity .5s}
@@ -899,7 +899,7 @@ void main () {
       S.flashGlow(xy || [S.level.size[0] / 2, S.camY + S.viewH() / 2], kind, ms);
     },
     floatText(xy, text) {
-      const [x, y] = HW.Stage.toScreen(xy);
+      const [x, y0] = HW.Stage.toScreen(xy), y = Math.max(y0, 110); // не уплывает под кнопку INSTALL вверху
       const el = this.add(`<div class="ft" style="left:${x}px;top:${y}px">${text}</div>`);
       el.style.setProperty('--f', this.fpx(54));
       setTimeout(() => el.remove(), 1000);
@@ -967,7 +967,8 @@ void main () {
 
     topbar({ onInstall, onMute }) {
       const logo = LOGO_SRC ? `<img src="${LOGO_SRC}" alt="Hero Wars">` : 'HERO WARS';
-      this.top = this.add(`<div class="top"><div class="btn inst">INSTALL</div><div class="btn mute">${SPEAKER(true)}</div><div class="logo">${logo}</div></div>`);
+      this.top = this.add(`<div class="top"><div class="btn inst">INSTALL</div><div class="btn mute">${SPEAKER(true)}</div></div>`);
+      this.logoEl = this.add(`<div class="logo">${logo}</div>`); // лого в правом нижнем углу, чтобы не мешать числам вверху
       this.top.querySelector('.inst').addEventListener('pointerdown', (e) => { e.stopPropagation(); onInstall(); });
       const m = this.top.querySelector('.mute'); let on = true;
       m.addEventListener('pointerdown', (e) => { e.stopPropagation(); on = !on; m.innerHTML = SPEAKER(on); onMute(!on); });
@@ -978,7 +979,7 @@ void main () {
         : `<div class="end pack">${LOGO_SRC ? `<img class="plogo" src="${LOGO_SRC}" alt="">` : '<div class="plogo wm">Hero Wars</div>'}<div class="pbtn"><img class="pcont" src="${CONT_SRC}" alt=""><img class="phand" src="${HAND_SRC}" alt=""></div></div>`);
       el.addEventListener('pointerdown', (e) => { e.stopPropagation(); onPlay(); });
       document.getElementById('world').classList.add('dim');
-      if (!fail && LOGO_SRC && this.top) { const l = this.top.querySelector('.logo'); if (l) l.style.visibility = 'hidden'; } // лого переехало на пэкшот, в шапке не дублируем
+      if (!fail && LOGO_SRC && this.logoEl) this.logoEl.style.visibility = 'hidden'; // лого переехало на пэкшот, в углу не дублируем
       requestAnimationFrame(() => { el.style.opacity = 1; });
       return el;
     },
@@ -1160,10 +1161,10 @@ void main () {
             return resolve({ power: game.power, hero, mate, gun: !!(mate && mate.gun) });
           }
           if (r.outcome === 'lose') {
-            // Герой погиб. Первая гибель: затемнение и перезапуск уровня снаружи; вторая: фейл с переходом в стор.
+            // Герой погиб. Первые две гибели: затемнение и перезапуск уровня снаружи; третья: фейл с переходом в стор.
             document.getElementById('game').onpointerdown = null; UI.ring(null);
             Flow.deaths = (Flow.deaths || 0) + 1;
-            if (Flow.deaths >= 2) return resolve({ fail: true });
+            if (Flow.deaths >= 3) return resolve({ fail: true });
             await UI.fade(1, 500, '#000');
             return resolve({ restart: true });
           }
@@ -1386,7 +1387,7 @@ HW.Mraid.whenReady(async function () {
   // После гибели: быстрый перезапуск без интро.
   const retry = (withLabel) => async () => { if (withLabel) giantLabel(); await UI.fade(0, 400); };
 
-  // Вторая гибель — фейл: карточка поражения и уход в стор.
+  // Третья гибель — фейл: карточка поражения и уход в стор.
   Flow.deaths = 0;
   const showFail = () => { sfx('fail'); UI.clear(); document.getElementById('game').onpointerdown = null;
     Stage.actors = Stage.actors.filter((a) => a.id === 'hero'); // на фоне остаётся только павший герой, без толпы мобов
