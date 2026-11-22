@@ -513,6 +513,7 @@ void main () {
     box.appendChild(poster); box.appendChild(cv);
     container.insertBefore(box, before);
     let dead = false, playing = false, idleT0 = performance.now(), raf = 0, done = null, hit = false;
+    let playStartedAt = 0, lastProgressAt = 0, idleFramePending = false;
 
     // ---- видео + WebGL (необязательная часть: если не сработает, остаётся постер) ----
     let gl = null, video = null, glOk = false;
@@ -568,7 +569,8 @@ void main () {
     const showVideo = () => {
       fit();
       if (!draw()) { shared.busy = false; video.pause(); return false; }
-      playing = true; videoShown = true; lastT = video.currentTime; cv.style.opacity = '1'; poster.style.opacity = '0'; return true;
+      playing = true; idleFramePending = false; playStartedAt = lastProgressAt = performance.now();
+      videoShown = true; lastT = video.currentTime; cv.style.opacity = '1'; poster.style.opacity = '0'; return true;
     };
     // При запрете автоплея повторяем play СИНХРОННО внутри первого жеста.
     // Игра уже доступна: игрок не застревает на интро, а постер остаётся видимым до готового кадра.
@@ -584,12 +586,14 @@ void main () {
       };
       for (const ev of gestureEvents) window.addEventListener(ev, retryOnGesture, { capture: true, passive: true });
     };
-    // После заявки остаёмся на последнем кадре видео (канвас): постер в браузере декодируется в другом цвете, чем H.264,
-    // и подмена давала заметный скачок яркости. Постер — только запасной вариант, когда видео не заиграло.
+    // Айдл берём из начала того же видео: одинаковое декодирование цвета без скачка яркости постера.
+    // Пока seek не готов, сохраняем последний отрисованный кадр на канвасе.
     let videoShown = false;
-    const finish = () => { // после заявки дышит последний отрисованный кадр
+    const finish = () => {
       if (!playing) return; playing = false; idleT0 = performance.now(); shared.busy = false;
       try { video.pause(); } catch (e) { /* ok */ }
+      idleFramePending = true;
+      try { video.currentTime = 0; } catch (e) { /* ниже есть запасной постер */ }
       if (done) { const d = done; done = null; d(); }
     };
     let lastT = -1;
@@ -597,10 +601,18 @@ void main () {
       if (dead) return;
       if (playing) {
         const t = video.currentTime;
-        // конец ловим чуть раньше последнего кадра: на iOS кадр «ended» может прийти в текстуру чёрным
-        if (video.ended || t >= (meta.dur || video.duration) - 0.12) { finish(); }
+        const duration = Math.min(meta.dur || Infinity, video.duration || Infinity);
+        if (t !== lastT) lastProgressAt = now;
+        // Не ждём бесконечно ended/currentTime: WebView может остановить декодер перед порогом конца.
+        if (video.ended || video.paused || t >= duration - 0.12 || now - lastProgressAt > 1500 || now - playStartedAt > duration * 1000 + 1500) { finish(); }
         else { if (t !== lastT) { lastT = t; draw(); } if (!hit && t >= meta.hit) { hit = true; if (onEvent) onEvent('hit'); } }
       } else {
+        if (idleFramePending) {
+          if (!video.seeking && video.currentTime < 0.1 && draw()) idleFramePending = false;
+          else if (now - idleT0 > 1500) {
+            idleFramePending = false; videoShown = false; poster.style.opacity = '1'; cv.style.opacity = '0';
+          }
+        }
         const w = 2 * Math.PI / PERIOD, tt = (now - idleT0) / 1000;
         const u = (1 - Math.cos(w * tt)) / 2;              // старт с нуля, без скачка
         box.style.transform = `translateY(${-u * AMP * 120}px) scale(${1 + u * AMP * 0.4},${1 + u * AMP}) rotate(${Math.sin(w * tt) * AMP * 14}deg)`;
