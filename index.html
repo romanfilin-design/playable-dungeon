@@ -308,7 +308,8 @@ void main () {
       ],
       edges: [['S', 'A'],
         ['A', 'wL1'], ['wL1', 'o1'], ['o1', 'wL2'], ['wL2', 'armor'], ['armor', 'wL3'], ['wL3', 'elite'], ['elite', 'wL4'], ['wL4', 'wL5'], ['wL5', 'sword2'],
-        ['A', 'wR1'], ['wR1', 'succ'], ['succ', 'wR2'], ['wR2', 'pocket'], ['pocket', 'wR3'], ['wR3', 'wR4'], ['wR4', 'wR5'], ['wR5', 'wR6'], ['wR6', 'C'],
+        // Правая петля приходит на площадку синего стража: пересечь её без боя нельзя.
+        ['A', 'wR1'], ['wR1', 'succ'], ['succ', 'wR2'], ['wR2', 'pocket'], ['pocket', 'wR3'], ['wR3', 'wR4'], ['wR4', 'wR5'], ['wR5', 'wR6'], ['wR6', 'o2'],
         ['A', 'C'], ['C', 'o2'], ['o2', 'portal']],
     },
   };
