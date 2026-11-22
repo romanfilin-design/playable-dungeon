@@ -1676,6 +1676,12 @@ void main () {
 ;
 window.HW = window.HW || {};
 HW.Mraid.whenReady(async function () {
+  // Тестовый переход одноразовый: сразу убираем #l2, чтобы обновление начинало уровень 1.
+  const skipL1 = location.hash.slice(1).split('&').includes('l2');
+  if (skipL1) {
+    const hash = location.hash.slice(1).split('&').filter((part) => part !== 'l2').join('&');
+    history.replaceState(history.state, '', location.pathname + location.search + (hash ? '#' + hash : ''));
+  }
   const { Stage, UI, Flow, LEVELS, Audio } = HW;
   const wait = (ms) => new Promise((r) => setTimeout(r, ms));
   const sfx = (n, o) => Audio.play(n, o);
@@ -1739,7 +1745,6 @@ HW.Mraid.whenReady(async function () {
     UI.endcard({ onPlay: () => { sfx('button_click'); store(); }, fail: true }); };
 
   // ВРЕМЕННО (для тестов): адрес с #l2 или кнопка «2» под INSTALL — сразу уровень 2 с состоянием как после уровня 1.
-  const skipL1 = /(^#|&)l2\b/.test(location.hash);
   // Уровень 1 (при гибели — заново с начала уровня)
   let r1, tries = 0;
   if (skipL1) {
