@@ -459,7 +459,7 @@ void main () {
 //   rig.intro()   // Promise: заявка (рык, замах когтями); по её окончании остаётся дыхание
 //   rig.destroy()
 // События: 'roar' (старт заявки), 'hit' (удар когтями).
-// Постер (первый кадр = поза айдла) лежит всегда; видео поверх него только пока идёт заявка. Не заиграло (экономия энергии, нет кодека) — постер и пауза 1,3 с.
+// Постер лежит под видео до первого готового кадра; при запрете автоплея повторяем запуск на касании.
 (function (HW) {
   'use strict';
   const PERIOD = 5, AMP = 0.03;               // дыхание: период, с; сила (доля высоты)
@@ -471,6 +471,31 @@ void main () {
     + 'float a=texture2D(t,vec2(.5+x,uv.y)).r;'
     + 'a=smoothstep(.04,.96,a)*smoothstep(0.,.07,uv.x);gl_FragColor=vec4(min(c,vec3(a)),a);}'; // левый край: коготь выходит за кадр ролика — растворяем, а не режем
 
+  // Видео создаётся заранее (при загрузке игры) и «разогревается» коротким play/pause на первом касании экрана:
+  // iOS иногда не даёт запустить видео без жеста, а после такого разогрева этот же элемент запускается всегда.
+  const shared = { video: null, ready: null, blobUrl: null, primed: false, busy: false };
+  function prepare(videoUri) {
+    if (shared.ready) return shared.ready;
+    const video = document.createElement('video');
+    video.muted = true; video.defaultMuted = true; video.playsInline = true; video.preload = 'auto';
+    video.setAttribute('playsinline', ''); video.setAttribute('webkit-playsinline', ''); video.setAttribute('muted', '');
+    Object.assign(video.style, { position: 'fixed', width: '2px', height: '2px', opacity: '0.01', pointerEvents: 'none', left: '0', top: '0' });
+    shared.video = video;
+    document.body.appendChild(video);
+    // Встроенный MP4 декодируем без fetch: CSP рекламных WebView может запрещать fetch(data:).
+    // Повторный prepare ждёт ту же загрузку, а не возвращает элемент с ещё пустым src.
+    shared.ready = HW.loadData(videoUri, 'buffer').then((bytes) => {
+      shared.blobUrl = URL.createObjectURL(new Blob([bytes], { type: 'video/mp4' }));
+      video.src = shared.blobUrl; video.load(); return video;
+    }).catch(() => { video.src = videoUri; video.load(); return video; });
+    const prime = () => {
+      if (shared.primed || shared.busy) return;
+      try { const p = video.play(); if (p && p.then) p.then(() => { if (!shared.busy) { video.pause(); try { video.currentTime = 0; } catch (e) { /* ok */ } } shared.primed = true; }).catch(() => {}); } catch (e) { /* ok */ }
+    };
+    for (const ev of ['touchend', 'pointerup', 'click']) addEventListener(ev, prime, { capture: true, passive: true });
+    return shared.ready;
+  }
+
   async function mount({ container, giant, size, videoUri, posterUri, meta, onEvent, before = null }) {
     const [bw, bh] = size, k = giant.w / meta.refW;   // px фона на px картинки giant.png
     // Коробка: общий позиционированный слой; внутри постер (<img>, всегда виден в айдле) и канвас видео (только пока играет заявка).
@@ -481,15 +506,16 @@ void main () {
       left: ((giant.x + meta.ox * k) / bw * 100) + '%', top: ((giant.y + meta.oy * k) / bh * 100) + '%',
       width: (meta.w * k / bw * 100) + '%' });
     const poster = new Image(); poster.draggable = false; poster.src = posterUri;
-    Object.assign(poster.style, { position: 'absolute', inset: '0', width: '100%', height: '100%', display: 'block' });
+    // постер и видео переключаем через opacity (не visibility): оба слоя всегда декодированы и отрисованы, без пустого/тёмного кадра на стыке
+    Object.assign(poster.style, { position: 'absolute', inset: '0', width: '100%', height: '100%', display: 'block', opacity: '1' });
     const cv = document.createElement('canvas'); cv.width = cv.height = 8;
-    Object.assign(cv.style, { position: 'absolute', inset: '0', width: '100%', height: '100%', display: 'block', visibility: 'hidden' });
+    Object.assign(cv.style, { position: 'absolute', inset: '0', width: '100%', height: '100%', display: 'block', opacity: '0' });
     box.appendChild(poster); box.appendChild(cv);
     container.insertBefore(box, before);
     let dead = false, playing = false, idleT0 = performance.now(), raf = 0, done = null, hit = false;
 
     // ---- видео + WebGL (необязательная часть: если не сработает, остаётся постер) ----
-    let gl = null, video = null, blobUrl = null, glOk = false;
+    let gl = null, video = null, glOk = false;
     try {
       gl = cv.getContext('webgl', { alpha: true, premultipliedAlpha: true, antialias: false, preserveDrawingBuffer: true });
       if (gl) {
@@ -507,12 +533,7 @@ void main () {
         gl.clearColor(0, 0, 0, 0);
         glOk = true;
       }
-      video = document.createElement('video');
-      video.muted = true; video.defaultMuted = true; video.playsInline = true; video.preload = 'auto';
-      video.setAttribute('playsinline', ''); video.setAttribute('webkit-playsinline', ''); video.setAttribute('muted', '');
-      Object.assign(video.style, { position: 'fixed', width: '2px', height: '2px', opacity: '0.01', pointerEvents: 'none', left: '0', top: '0' });
-      try { blobUrl = URL.createObjectURL(await (await fetch(videoUri)).blob()); } catch (e) { blobUrl = videoUri; }
-      document.body.appendChild(video); video.src = blobUrl; video.load();
+      video = await prepare(videoUri);
     } catch (e) { glOk = false; video = null; }
 
     const fit = () => {
@@ -524,23 +545,50 @@ void main () {
     };
     const draw = () => {
       if (dead || !glOk || !video || video.readyState < 2) return;
-      try { gl.clear(gl.COLOR_BUFFER_BIT); gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, video); gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4); } catch (e) { /* кадр пропускаем */ }
+      try { gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, video); gl.clear(gl.COLOR_BUFFER_BIT); gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4); return true; } catch (e) { return false; }
     };
-    fit(); const onResize = () => fit(); window.addEventListener('resize', onResize);
+    fit(); const onResize = () => { fit(); if (videoShown && !playing) draw(); }; window.addEventListener('resize', onResize); // ресайз чистит канвас — перерисовываем стоп-кадр
 
-    // Пытаемся запустить видео: успех — оно реально пошло (currentTime растёт) за 1,2 с. Иначе (экономия энергии, нет кодека) — постер.
+    // Успех — видео реально пошло (currentTime растёт). Даём до 4 с на декодирование.
     const startVideo = () => new Promise((res) => {
       if (!glOk || !video) return res(false);
-      let fin = false; const end = (v) => { if (!fin) { fin = true; res(v); } };
+      let fin = false, checkFrame = 0, timer = 0;
+      const end = (v) => { if (!fin) { fin = true; clearTimeout(timer); cancelAnimationFrame(checkFrame); if (!v) shared.busy = false; res(v); } };
       try { video.currentTime = 0; } catch (e) { /* ещё нет метаданных */ }
       const t0 = performance.now();
-      const chk = () => { if (fin) return; if (video.currentTime > 0.05 && video.readyState >= 2) return end(true); if (performance.now() - t0 > 1200) return end(false); requestAnimationFrame(chk); };
+      const chk = () => { if (fin) return; if (dead) return end(false); if (video.currentTime > 0.05 && video.readyState >= 2) return end(true); if (performance.now() - t0 > 4000) return end(false); checkFrame = requestAnimationFrame(chk); };
+      shared.busy = true;
+      timer = setTimeout(() => end(false), 4000);
       try { const p = video.play(); if (p && p.catch) p.catch(() => end(false)); } catch (e) { return end(false); }
-      requestAnimationFrame(chk);
+      checkFrame = requestAnimationFrame(chk);
     });
-    const toPoster = () => { cv.style.visibility = 'hidden'; poster.style.visibility = 'visible'; };
-    const finish = () => {                                 // конец заявки: вернулись в позу айдла — показываем постер, он дышит
-      if (!playing) return; playing = false; idleT0 = performance.now(); toPoster();
+    const gestureEvents = ['pointerup', 'touchend', 'click'];
+    let retryOnGesture = null, starting = false;
+    const clearRetry = () => { if (retryOnGesture) for (const ev of gestureEvents) window.removeEventListener(ev, retryOnGesture, true); retryOnGesture = null; };
+    const showVideo = () => {
+      fit();
+      if (!draw()) { shared.busy = false; video.pause(); return false; }
+      playing = true; videoShown = true; lastT = video.currentTime; cv.style.opacity = '1'; poster.style.opacity = '0'; return true;
+    };
+    // При запрете автоплея повторяем play СИНХРОННО внутри первого жеста.
+    // Игра уже доступна: игрок не застревает на интро, а постер остаётся видимым до готового кадра.
+    const armRetry = () => {
+      clearRetry();
+      retryOnGesture = () => {
+        if (dead || starting || playing) return;
+        starting = true;
+        startVideo().then((ok) => {
+          starting = false; if (dead) return;
+          if (ok && showVideo()) clearRetry();
+        });
+      };
+      for (const ev of gestureEvents) window.addEventListener(ev, retryOnGesture, { capture: true, passive: true });
+    };
+    // После заявки остаёмся на последнем кадре видео (канвас): постер в браузере декодируется в другом цвете, чем H.264,
+    // и подмена давала заметный скачок яркости. Постер — только запасной вариант, когда видео не заиграло.
+    let videoShown = false;
+    const finish = () => { // после заявки дышит последний отрисованный кадр
+      if (!playing) return; playing = false; idleT0 = performance.now(); shared.busy = false;
       try { video.pause(); } catch (e) { /* ok */ }
       if (done) { const d = done; done = null; d(); }
     };
@@ -549,9 +597,9 @@ void main () {
       if (dead) return;
       if (playing) {
         const t = video.currentTime;
-        if (t !== lastT) { lastT = t; draw(); }
-        if (!hit && t >= meta.hit) { hit = true; if (onEvent) onEvent('hit'); }
-        if (video.ended || t >= (meta.dur || video.duration) - 0.03) finish();
+        // конец ловим чуть раньше последнего кадра: на iOS кадр «ended» может прийти в текстуру чёрным
+        if (video.ended || t >= (meta.dur || video.duration) - 0.12) { finish(); }
+        else { if (t !== lastT) { lastT = t; draw(); } if (!hit && t >= meta.hit) { hit = true; if (onEvent) onEvent('hit'); } }
       } else {
         const w = 2 * Math.PI / PERIOD, tt = (now - idleT0) / 1000;
         const u = (1 - Math.cos(w * tt)) / 2;              // старт с нуля, без скачка
@@ -563,6 +611,7 @@ void main () {
     return {
       canvas: box,
       intro() {
+        clearRetry();
         if (done) { const d = done; done = null; d(); }
         box.style.transform = ''; hit = false; lastT = -1;
         if (onEvent) onEvent('roar');
@@ -570,21 +619,24 @@ void main () {
           done = res;
           startVideo().then((ok) => {
             if (dead) return;
-            if (!ok) { try { video && video.pause(); } catch (e) { /* ok */ } setTimeout(() => { if (done === res) { done = null; res(); } }, 1300); return; } // без видео: постер + короткая пауза
-            playing = true; lastT = -1; fit(); draw(); cv.style.visibility = 'visible'; poster.style.visibility = 'hidden';
+            if (!ok || !showVideo()) {
+              try { video && video.pause(); } catch (e) { /* ok */ }
+              shared.busy = false;
+              if (glOk && video) armRetry();
+              if (done === res) { done = null; res(); }
+            }
           });
         });
       },
       destroy() {
-        dead = true; cancelAnimationFrame(raf); window.removeEventListener('resize', onResize);
-        if (video) { try { video.pause(); } catch (e) { /* ok */ } video.removeAttribute('src'); video.load(); video.remove(); }
-        if (blobUrl && blobUrl.startsWith('blob:')) URL.revokeObjectURL(blobUrl);
+        dead = true; clearRetry(); cancelAnimationFrame(raf); window.removeEventListener('resize', onResize);
+        if (video) { try { video.pause(); } catch (e) { /* ok */ } } shared.busy = false; // видео общее: не удаляем, пригодится при перезапуске уровня
         box.remove(); if (done) { done(); done = null; }
       },
     };
   }
 
-  HW.GiantRig = { mount };
+  HW.GiantRig = { mount, prepare };
 })(window.HW = window.HW || {});
 
 ;
@@ -622,6 +674,7 @@ void main () {
     view: { k: 1, tx: 0, ty: 0 }, // зум камеры поверх обычной раскладки: экранная точка p → p·k + t
 
     async load() {
+      if (HW.GiantRig && A.giantIntro) HW.GiantRig.prepare(A.giantIntro[1]); // видео гигантши — заранее, чтобы разогреть на первом касании
       const root = document.getElementById('game');
       root.innerHTML = '<div id="bgfill"></div><div id="world"><img id="bg"></div><canvas id="cv"></canvas><div id="ui"></div>';
       Object.assign(document.getElementById('bgfill').style, { position: 'absolute', inset: 0 }); // заливка за краями фона: градиент цвета его краёв (ставится в setLevel)
@@ -1167,6 +1220,10 @@ void main () {
     topbar({ onInstall, onMute }) {
       const logo = LOGO_SRC ? `<img src="${LOGO_SRC}" alt="Hero Wars">` : 'HERO WARS';
       this.top = this.add(`<div class="top"><div class="btn inst">INSTALL</div><div class="btn mute">${SPEAKER(true)}</div></div>`);
+      // ВРЕМЕННО (тесты): кнопка «2» под INSTALL — перезапуск сразу со второго уровня
+      const dbg = this.add('<div class="btn dbg2" style="position:absolute;left:10px;top:58px;padding:5px 12px;pointer-events:auto;background:linear-gradient(#5aa9ff,#2a6fd6);box-shadow:0 3px 0 #1a4a9a">2</div>');
+      dbg.addEventListener('pointerdown', (e) => e.stopPropagation());
+      dbg.addEventListener('click', (e) => { e.stopPropagation(); location.hash = 'l2'; location.reload(); });
       this.logoEl = this.add(`<div class="logo">${logo}</div>`); // лого в правом нижнем углу, чтобы не мешать числам вверху
       const inst = this.top.querySelector('.inst'); // переход в стор — на click: мобильные браузеры блокируют window.open на pointerdown
       inst.addEventListener('pointerdown', (e) => e.stopPropagation()); inst.addEventListener('click', (e) => { e.stopPropagation(); onInstall(); });
@@ -1667,7 +1724,7 @@ HW.Mraid.whenReady(async function () {
     Stage.follow = null; Stage.camY = Stage.clampCam(0);
     giantLabel();
     await UI.fade(0, 450);
-    sfx('roar');
+    sfx('roar', { pitch: 2 ** (2 / 12) }); // гигантша: +2 полутона
     await Stage.giantRoar(); // заявка гигантши ~2,7 с (удар когтями — своя тряска в stage)
     Stage.follow = hero;
   };
@@ -1681,13 +1738,20 @@ HW.Mraid.whenReady(async function () {
     if (UI.logoEl) Object.assign(UI.logoEl.style, { bottom: 'auto', top: '10px' }); // на экране поражения лого в правом верхнем углу
     UI.endcard({ onPlay: () => { sfx('button_click'); store(); }, fail: true }); };
 
+  // ВРЕМЕННО (для тестов): адрес с #l2 или кнопка «2» под INSTALL — сразу уровень 2 с состоянием как после уровня 1.
+  const skipL1 = /(^#|&)l2\b/.test(location.hash);
   // Уровень 1 (при гибели — заново с начала уровня)
   let r1, tries = 0;
-  do {
-    Flow.weapon = null; Flow.armor = null; Flow.wings = false; // при перезапуске уровня 1 снаряжение снова стартовое
-    r1 = await Flow.playLevel(LEVELS.l1, 5, { heroSkins: Flow.SK.hero1, onBossWin: growth, intro: tries++ ? retry(false) : introL1 });
-  } while (r1.restart);
-  if (r1.fail) return showFail();
+  if (skipL1) {
+    Flow.weapon = (LEVELS.l1.nodes.find((n) => n.type === 'sword') || {}).weapon || null; Flow.armor = null; Flow.wings = false;
+    r1 = { power: 350, mate: true };
+  } else {
+    do {
+      Flow.weapon = null; Flow.armor = null; Flow.wings = false; // при перезапуске уровня 1 снаряжение снова стартовое
+      r1 = await Flow.playLevel(LEVELS.l1, 5, { heroSkins: Flow.SK.hero1, onBossWin: growth, intro: tries++ ? retry(false) : introL1 });
+    } while (r1.restart);
+    if (r1.fail) return showFail();
+  }
 
   // Переход через золотые ворота
   sfx('teleport');
