@@ -1730,7 +1730,7 @@ HW.Mraid.whenReady(async function () {
     Stage.follow = null; Stage.camY = Stage.clampCam(0);
     giantLabel();
     await UI.fade(0, 450);
-    sfx('roar', { pitch: 2 ** (2 / 12) }); // гигантша: +2 полутона
+    sfx('roar', { pitch: 2 ** (4 / 12) }); // гигантша: +2 полных тона от исходного звука
     await Stage.giantRoar(); // заявка гигантши ~2,7 с (удар когтями — своя тряска в stage)
     Stage.follow = hero;
   };
