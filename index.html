@@ -926,6 +926,7 @@ void main () {
       const st = new spine.AnimationState(new spine.AnimationStateData(sd));
       st.data.defaultMix = 0.15;
       const actor = { id, key, sk, st, x: xy[0], y: xy[1], h, k: 1, flip, alpha: 1, base: 1 };
+      actor.hasAnimation = (name) => !!sd.findAnimation(name);
       actor.setSkins = (names) => {
         actor.skinNames = names;
         const skin = new spine.Skin('c'); for (const n of names) { const s = sd.findSkin(n); if (s) skin.addSkin(s); }
@@ -1054,7 +1055,7 @@ void main () {
 #ui .bub{position:absolute;transform:translate(-50%,-100%);pointer-events:none;background:#fff6e8;border:.07em solid #fff;border-radius:50%;width:1.5em;height:1.5em;display:flex;align-items:center;justify-content:center;font:900 var(--f)/1 'Arial Black',Arial;color:#f29a1f;-webkit-text-stroke:.04em #b3610a;box-shadow:0 .1em .2em rgba(0,0,0,.3);animation:hwbub 1.2s ease-in-out infinite}
 #ui .bub:after{content:'';position:absolute;bottom:-.28em;left:50%;margin-left:-.22em;border:.22em solid transparent;border-top-color:#fff6e8;border-bottom:0}
 @keyframes hwbub{50%{transform:translate(-50%,-112%)}}
-#ui .top{position:absolute;left:10px;right:10px;top:10px;display:flex;align-items:center;gap:8px;pointer-events:auto}
+#ui .top{position:absolute;left:10px;right:10px;top:10px;display:flex;align-items:center;gap:8px;pointer-events:auto;z-index:2}
 #ui .btn{background:linear-gradient(#5fd13a,#2f9a1e);color:#fff;font:900 15px 'Arial Black',Arial;padding:7px 16px;border-radius:9px;border:2px solid #fff;box-shadow:0 3px 0 #1d6a12;cursor:pointer}
 #ui .mute{width:38px;height:34px;padding:5px}
 #ui .logo{position:absolute;right:10px;bottom:10px;pointer-events:none;font:900 19px 'Arial Black',Arial;color:#ffb300;-webkit-text-stroke:1.3px #7a3a00;letter-spacing:.5px}
@@ -1233,10 +1234,6 @@ void main () {
     topbar({ onInstall, onMute }) {
       const logo = LOGO_SRC ? `<img src="${LOGO_SRC}" alt="Hero Wars">` : 'HERO WARS';
       this.top = this.add(`<div class="top"><div class="btn inst">INSTALL</div><div class="btn mute">${SPEAKER(true)}</div></div>`);
-      // ВРЕМЕННО (тесты): кнопка «2» под INSTALL — перезапуск сразу со второго уровня
-      const dbg = this.add('<div class="btn dbg2" style="position:absolute;left:10px;top:58px;padding:5px 12px;pointer-events:auto;background:linear-gradient(#5aa9ff,#2a6fd6);box-shadow:0 3px 0 #1a4a9a">2</div>');
-      dbg.addEventListener('pointerdown', (e) => e.stopPropagation());
-      dbg.addEventListener('click', (e) => { e.stopPropagation(); location.hash = 'l2'; location.reload(); });
       this.logoEl = this.add(`<div class="logo">${logo}</div>`); // лого в правом нижнем углу, чтобы не мешать числам вверху
       const inst = this.top.querySelector('.inst'); // переход в стор — на click: мобильные браузеры блокируют window.open на pointerdown
       inst.addEventListener('pointerdown', (e) => e.stopPropagation()); inst.addEventListener('click', (e) => { e.stopPropagation(); onInstall(); });
@@ -1319,7 +1316,7 @@ void main () {
     await wait(T.stop); // кадр стоит: тряска и отброс начинаются после стопа — так удар «втыкается»
     S.shake(T.shake[0], T.shake[1], [away, 0]);
     UI.sparks(hit, { n: T.spark, size: 58, speed: 380, dir: away > 0 ? -0.2 : Math.PI + 0.2, spread: 0.9 });
-    if (T.knock) { if (tier !== 'mid') foe.play('damage'); foe.knock(away * T.knock, 300); }
+    if (T.knock) { if (tier !== 'mid' && foe.hasAnimation('damage')) foe.play('damage'); foe.knock(away * T.knock, 300); }
     if (by) by.knock(-away * (T.knock ? 14 : 8), 160, true);
   };
   // Атаки Гала: [кривая скорости (время анимации → timeScale): медленный замах, резкий удар], число ударов (событий hit).
@@ -1467,7 +1464,7 @@ void main () {
       const updateDanger = () => { for (const nd of Object.values(game.nodes)) if ((nd.type === 'enemy' || nd.type === 'boss') && actors[nd.id]) UI.beatable(actors[nd.id], nd.power < game.power); };
       updateDanger();
       return new Promise((resolve) => {
-        let locked = false;
+        let locked = !!intro; // во время интро тапы не запускают бой и не переживают смену камеры
         const act = async (r) => {
           if (r.outcome === 'ignored') return;
           UI.ring(null); UI.hand(null); clearTimeout(idleTimer);
@@ -1550,7 +1547,7 @@ void main () {
             }
             await wait(150);
             // Враг падает, а его сила тает до нуля; затем она «перекачивается» в героя.
-            sfx('death_enemy'); foe.play('death'); setTimeout(() => foe.remove(500), 350);
+            sfx('death_enemy'); if (foe.hasAnimation('death')) foe.play('death'); setTimeout(() => foe.remove(500), 350);
             const drain = UI.setNumber(foe, 0, { pop: false, ms: 600 });
             await wait(320);
             UI.floatText(center(r.target), '+' + tgt.power);
@@ -1670,7 +1667,7 @@ void main () {
           return true;
         };
         document.getElementById('game').onpointerdown = onTap;
-        if (intro) intro(level, actors, hero).then(showHint); else showHint();
+        if (intro) intro(level, actors, hero).then(() => { locked = false; showHint(); }); else showHint();
       });
     },
   };
@@ -1690,12 +1687,6 @@ void main () {
 ;
 window.HW = window.HW || {};
 HW.Mraid.whenReady(async function () {
-  // Тестовый переход одноразовый: сразу убираем #l2, чтобы обновление начинало уровень 1.
-  const skipL1 = location.hash.slice(1).split('&').includes('l2');
-  if (skipL1) {
-    const hash = location.hash.slice(1).split('&').filter((part) => part !== 'l2').join('&');
-    history.replaceState(history.state, '', location.pathname + location.search + (hash ? '#' + hash : ''));
-  }
   const { Stage, UI, Flow, LEVELS, Audio } = HW;
   const wait = (ms) => new Promise((r) => setTimeout(r, ms));
   const sfx = (n, o) => Audio.play(n, o);
@@ -1758,19 +1749,13 @@ HW.Mraid.whenReady(async function () {
     if (UI.logoEl) Object.assign(UI.logoEl.style, { bottom: 'auto', top: '10px' }); // на экране поражения лого в правом верхнем углу
     UI.endcard({ onPlay: () => { sfx('button_click'); store(); }, fail: true }); };
 
-  // ВРЕМЕННО (для тестов): адрес с #l2 или кнопка «2» под INSTALL — сразу уровень 2 с состоянием как после уровня 1.
   // Уровень 1 (при гибели — заново с начала уровня)
   let r1, tries = 0;
-  if (skipL1) {
-    Flow.weapon = (LEVELS.l1.nodes.find((n) => n.type === 'sword') || {}).weapon || null; Flow.armor = null; Flow.wings = false;
-    r1 = { power: 350, mate: true };
-  } else {
-    do {
-      Flow.weapon = null; Flow.armor = null; Flow.wings = false; // при перезапуске уровня 1 снаряжение снова стартовое
-      r1 = await Flow.playLevel(LEVELS.l1, 5, { heroSkins: Flow.SK.hero1, onBossWin: growth, intro: tries++ ? retry(false) : introL1 });
-    } while (r1.restart);
-    if (r1.fail) return showFail();
-  }
+  do {
+    Flow.weapon = null; Flow.armor = null; Flow.wings = false; // при перезапуске уровня 1 снаряжение снова стартовое
+    r1 = await Flow.playLevel(LEVELS.l1, 5, { heroSkins: Flow.SK.hero1, onBossWin: growth, intro: tries++ ? retry(false) : introL1 });
+  } while (r1.restart);
+  if (r1.fail) return showFail();
 
   // Переход через золотые ворота
   sfx('teleport');
@@ -1796,12 +1781,21 @@ HW.Mraid.whenReady(async function () {
   // Герои на эндкарде (как в раскадровке, кадр 8).
   Stage.follow = null; Stage.actors = [];
   // Портрет: герои внизу по центру под лого и кнопкой. Горизонталь: герои слева, лого и кнопка столбиком справа (см. CSS .end.pack).
-  const land = innerWidth > innerHeight, cy = Stage.camY + Stage.viewH() * 0.66;
-  const hp = land ? { h: innerHeight * 0.62 / Stage.s, xy: Stage.toWorld([innerWidth * 0.22, innerHeight * 0.93]) } : { h: 560, xy: [270, cy] };
-  const mp = land ? { h: innerHeight * 0.52 / Stage.s, xy: Stage.toWorld([innerWidth * 0.41, innerHeight * 0.9]) } : { h: 470, xy: [640, cy - 30] };
-  Stage.spawn('endHero', 'hero', Flow.dress(Flow.SK.hero2), 'happy', hp.h, hp.xy).play('happy', true);
+  const endHero = Stage.spawn('endHero', 'hero', Flow.dress(Flow.SK.hero2), 'happy', 560, [0, 0]);
+  endHero.play('happy', true);
   // С бластером «happy» поворачивает её спиной, поэтому радуется салютом бластера (attack3), без него — обычная радость.
-  Stage.spawn('endMate', 'ginger', r2.gun ? Flow.SK.gunGinger : Flow.SK.ginger, r2.gun ? 'attack3' : 'happy', mp.h, mp.xy).play(r2.gun ? 'attack3' : 'happy', true);
+  const endMate = r2.mate ? Stage.spawn('endMate', 'ginger', r2.gun ? Flow.SK.gunGinger : Flow.SK.ginger, r2.gun ? 'attack3' : 'happy', 470, [0, 0]) : null;
+  if (endMate) endMate.play(r2.gun ? 'attack3' : 'happy', true);
+  // После поворота экрана пересчитываем и положение, и рост героев под новую раскладку CTA.
+  const layoutEndcard = () => {
+    const land = innerWidth > innerHeight, cy = Stage.camY + Stage.viewH() * 0.66;
+    const place = (actor, h, xy) => { actor.k = h / actor.h; [actor.x, actor.y] = xy; };
+    place(endHero, land ? innerHeight * 0.62 / Stage.s : 560,
+      land ? Stage.toWorld([innerWidth * (endMate ? 0.22 : 0.28), innerHeight * 0.93]) : [endMate ? 270 : 470, cy]);
+    if (endMate) place(endMate, land ? innerHeight * 0.52 / Stage.s : 470,
+      land ? Stage.toWorld([innerWidth * 0.41, innerHeight * 0.9]) : [640, cy - 30]);
+  };
+  layoutEndcard(); addEventListener('resize', layoutEndcard);
   UI.endcard({ onPlay: () => { sfx('button_click'); store(); } });
   await UI.fade(0, 400);
   window.__END = true;
